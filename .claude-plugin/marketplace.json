@@ -1,0 +1,19 @@
+{
+  "name": "vibekiller",
+  "owner": {
+    "name": "vibekiller"
+  },
+  "metadata": {
+    "description": "Production-readiness toolkit for vibe-coded apps: a full technical-due-diligence audit and a fast 13-layer self-check."
+  },
+  "plugins": [
+    {
+      "name": "vibekiller",
+      "source": {
+        "source": "github",
+        "repo": "YOUR_GITHUB_USERNAME/vibekiller"
+      },
+      "description": "Kill the vibe-coding gap. /audit runs a multi-domain due-diligence audit (hard-stops H1-H11, blind-spots B1-B19, 13 domains, deterministic verdict); /vibe-to-prod is a fast guided 13-layer readiness self-check."
+    }
+  ]
+}

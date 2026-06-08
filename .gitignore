@@ -1,0 +1,15 @@
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# audit output (generated in target repos, not part of the toolkit)
+audit-report*.md
+external-actions-required.md
+baseline-policy.md
+remediation-decisions.md
+
+# local notes
+*.local.md

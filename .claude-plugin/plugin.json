@@ -1,0 +1,14 @@
+{
+  "name": "vibekiller",
+  "description": "Kill the vibe-coding gap: a production-readiness toolkit for AI-generated apps. A full multi-domain technical-due-diligence audit (/audit) plus a fast 13-layer self-check (/vibe-to-prod), built on Matt Murphy's production stack.",
+  "version": "1.0.0",
+  "author": {
+    "name": "vibekiller"
+  },
+  "homepage": "https://github.com/YOUR_GITHUB_USERNAME/vibekiller",
+  "repository": "https://github.com/YOUR_GITHUB_USERNAME/vibekiller",
+  "license": "MIT",
+  "skills": "./skills",
+  "commands": "./commands",
+  "agents": "./agents"
+}

@@ -9,7 +9,7 @@ DEST="${CLAUDE_HOME:-$HOME/.claude}"
 echo "Installing vibekiller into: $DEST"
 echo ""
 
-for d in skills agents commands context rules hooks; do
+for d in skills agents commands context rules hooks workflows; do
   if [ -d "$SRC/$d" ]; then
     mkdir -p "$DEST/$d"
     cp -R "$SRC/$d/." "$DEST/$d/"

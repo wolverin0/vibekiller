@@ -10,7 +10,8 @@ It ships two entry points:
 | Command | What it is | When |
 |---|---|---|
 | **`/vibe-to-prod`** | A fast, guided **13-layer self-check**. Walks the production stack, runs cheap detections + manual tests, emits a PASS/GAP scorecard and a prioritized "finish the boring 20%" list. | "Is my app ready to ship? What am I missing?" |
-| **`/audit`** | A full **multi-domain technical due-diligence audit** in an isolated subagent. Hard-stops, blind-spots, 13 domains, a deterministic verdict, and a dual-layer report with `path:line` evidence for every finding. | Acquisition-grade review, pre-launch gate, "prove it's ready." |
+| **`/audit`** | A full **multi-domain technical due-diligence audit** (read-only). Hard-stops, blind-spots, 13 domains, a deterministic verdict, and a dual-layer report with `path:line` evidence for every finding. | Acquisition-grade review, pre-launch gate, "prove it's ready." |
+| **`/audit-remediate`** | The **whole machine**: a deterministic Workflow that audits, *fixes* findings on an isolated branch with per-fix verification, re-audits in a loop until green (or budget/rounds run out), and **opens a PR**. Never merges, never touches `main`. | "Actually fix it and give me a PR to review." |
 
 Both are grounded in the **production-readiness playbook** (`context/production-readiness-playbook.md`) — a distillation of the 13-layer production stack and the recurring ways AI-generated apps break.
 
@@ -88,11 +89,36 @@ of the standard plugin surface.
 
 ```
 /vibe-to-prod                     # fast self-check of the current project
-/audit                            # full audit, all 13 domains (40–70 min)
+/audit                            # full audit, all 13 domains (40–70 min), read-only
 /audit --scope=src/api            # audit only a subtree
 /audit --priority-domains=1,5,7   # only these domains (faster)
 /audit-fix F-1.3                  # generate a fix prompt for a specific finding
+/audit-remediate                  # audit + fix on a branch + re-audit loop → opens a PR
+/audit-remediate --scope=src/api --max-rounds=3
 ```
+
+### How remediation stays safe (the trust model)
+
+`/audit-remediate` follows the same trust boundary as Dependabot / CodeQL autofix:
+**the machine proposes a PR; you review the diff.** Concretely:
+
+- The audit is **read-only** and parallelized across the 13 domains.
+- Remediation runs **only on a dedicated branch**, **serially** — each fix is verified
+  against the *cumulative* branch state (full test suite + the finding's own
+  verification) before it is committed. Fixes that can't be verified are reverted and
+  reported, not left in.
+- A test is **never** weakened or deleted to go green (that is the H9/B13 failure mode
+  the audit specifically hunts).
+- Human-only actions (rotate a leaked key, enable RLS in a dashboard, buy a paid tier,
+  run a data migration) are **never attempted** — they're surfaced in the PR's
+  "HUMAN ACTION REQUIRED" checklist.
+- The loop is **deterministic and bounded** (`--max-rounds`, token budget) and
+  **resumable**. It opens a PR; it never merges and never touches `main`.
+
+Why a Workflow and not a one-shot prompt: a multi-hour unattended *mutation* run needs
+a deterministic, bounded, resumable loop and a parallel audit — properties a
+model-judgment loop can't guarantee. The fix phase is deliberately **serial** (not
+worktree-parallel) because two fixes that each pass in isolation can break together.
 
 ---
 
@@ -115,11 +141,12 @@ skills/        22 skills: audit-orchestrator, audit-method, audit-hard-stops,
                audit-tambon-hunt, audit-blind-spots, audit-decisions,
                audit-fix-generator, audit-loop, audit-domain-01..13, vibe-to-prod
 agents/        audit-runner, audit-domain-runner (isolated-context subagents)
-commands/      /audit, /vibe-to-prod
+commands/      /audit, /vibe-to-prod, /audit-remediate
 context/       the playbook + audit catalogs (rules, report-format, triage,
                hard-stops, tambon-signatures, blind-spots)
 rules/         production-readiness.md (optional always-on rule)
 hooks/         pre/post audit evidence + format checks (optional)
+workflows/     audit-remediate.mjs (the e2e audit→fix→re-review→PR machine)
 install.sh / install.ps1
 .claude-plugin/  plugin.json, marketplace.json
 ```

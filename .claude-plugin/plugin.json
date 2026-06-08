@@ -10,5 +10,6 @@
   "license": "MIT",
   "skills": "./skills",
   "commands": "./commands",
-  "agents": "./agents"
+  "agents": "./agents",
+  "workflows": "./workflows"
 }

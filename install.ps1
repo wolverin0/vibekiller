@@ -7,7 +7,7 @@ $dest = if ($env:CLAUDE_HOME) { $env:CLAUDE_HOME } else { Join-Path $HOME '.clau
 
 Write-Host "Installing vibekiller into: $dest`n"
 
-foreach ($d in 'skills', 'agents', 'commands', 'context', 'rules', 'hooks') {
+foreach ($d in 'skills', 'agents', 'commands', 'context', 'rules', 'hooks', 'workflows') {
   $from = Join-Path $src $d
   if (Test-Path $from) {
     $to = Join-Path $dest $d

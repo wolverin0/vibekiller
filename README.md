@@ -57,7 +57,7 @@ Per-finding fix prompts are available on demand via `audit-fix-generator`.
 ### Option A — install script (works for any Claude Code user)
 
 ```bash
-git clone https://github.com/YOUR_GITHUB_USERNAME/vibekiller
+git clone https://github.com/wolverin0/vibekiller
 cd vibekiller
 ./install.sh           # macOS / Linux / WSL / Git-Bash
 #   or on Windows PowerShell:
@@ -70,7 +70,7 @@ into `~/.claude/`. Restart Claude Code afterward.
 ### Option B — as a Claude Code plugin
 
 ```
-/plugin marketplace add YOUR_GITHUB_USERNAME/vibekiller
+/plugin marketplace add wolverin0/vibekiller
 /plugin install vibekiller@vibekiller
 ```
 
@@ -79,7 +79,7 @@ optional rule still need the install script** (or a manual copy of `context/` �
 `~/.claude/context/` and `rules/` → `~/.claude/rules/`), because those aren't part
 of the standard plugin surface.
 
-> Before publishing your fork, replace `YOUR_GITHUB_USERNAME` in
+> Forking? Replace `wolverin0` with your own GitHub username in
 > `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and this README.
 
 ---

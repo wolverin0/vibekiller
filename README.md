@@ -103,10 +103,13 @@ of the standard plugin surface.
 **the machine proposes a PR; you review the diff.** Concretely:
 
 - The audit is **read-only** and parallelized across the 13 domains.
-- Remediation runs **only on a dedicated branch**, **serially** — each fix is verified
-  against the *cumulative* branch state (full test suite + the finding's own
-  verification) before it is committed. Fixes that can't be verified are reverted and
-  reported, not left in.
+- Remediation runs **only on a dedicated branch**, and **every committing agent
+  hard-asserts** `git rev-parse --abbrev-ref HEAD` equals that branch before it
+  commits — if it can't get onto the branch it refuses to commit (it will never write
+  to the branch you launched from). Fixes are **serial**: each is verified with
+  **cheap targeted tests** for the files it touched, then a **single full test-suite +
+  build gate** runs once at the end of the round. Fixes that can't be verified are
+  reverted and reported, not left in.
 - A test is **never** weakened or deleted to go green (that is the H9/B13 failure mode
   the audit specifically hunts).
 - Human-only actions (rotate a leaked key, enable RLS in a dashboard, buy a paid tier,
@@ -119,6 +122,11 @@ Why a Workflow and not a one-shot prompt: a multi-hour unattended *mutation* run
 a deterministic, bounded, resumable loop and a parallel audit — properties a
 model-judgment loop can't guarantee. The fix phase is deliberately **serial** (not
 worktree-parallel) because two fixes that each pass in isolation can break together.
+
+> `/audit-remediate` is the newest, least battle-tested piece. **Run it scoped first**
+> (`--scope=<subtree> --max-rounds=1`) on a repo with a **clean working tree**, review
+> the PR, and build trust before pointing it at a whole repo. `/vibe-to-prod` and
+> `/audit` are read-only and safe to run anytime.
 
 ---
 

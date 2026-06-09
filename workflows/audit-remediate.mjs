@@ -1,12 +1,13 @@
 export const meta = {
   name: 'audit-remediate',
-  description: 'End-to-end production-readiness remediation. Parallel-audits a repo (hard-stops H1-H11, blind-spots B1-B19, tambon, 13 domains), serially remediates findings on an isolated branch with per-fix verification (test + behavior), re-audits, loops until the verdict is green or rounds/budget run out, then opens a PR for human review. Never merges. Never touches main.',
+  description: 'End-to-end production-readiness remediation. Parallel-audits a repo (hard-stops H1-H11, blind-spots B1-B19, tambon, 13 domains), serially remediates findings on a dedicated isolated branch (each fix HARD-ASSERTS it is on that branch before committing) with cheap targeted per-fix tests, runs one full-suite gate, re-audits, loops until the verdict is green or rounds/budget run out, then opens a PR for human review. Never merges. Never commits to the branch that was checked out at launch.',
   phases: [
     { title: 'Prep' },
     { title: 'Audit' },
     { title: 'Triage' },
     { title: 'Remediate' },
     { title: 'Re-review' },
+    { title: 'Verify' },
     { title: 'Ship' },
   ],
 }
@@ -18,6 +19,18 @@ const STAMP = A.stamp || 'run'            // caller passes a date stamp, e.g. "2
 const MAX_ROUNDS = A.maxRounds || 4
 const BRANCH = `audit/remediation-${STAMP}`
 const MIN_BUDGET = 80_000                 // stop remediating below this many output tokens
+
+// Hard branch-isolation guard prepended to EVERY agent that may commit.
+// Earlier versions only *said* "on branch X" and trusted a prior agent's
+// checkout to persist; when Prep's checkout silently failed, fixers committed
+// onto the launch branch. Now every committing agent re-asserts the branch.
+const BRANCH_GUARD =
+  `MANDATORY FIRST STEP — branch isolation. Run \`git rev-parse --abbrev-ref HEAD\`. ` +
+  `If it is not exactly "${BRANCH}", get onto it: \`git checkout ${BRANCH}\`, or create it ` +
+  `(\`git checkout -b ${BRANCH}\`) if it does not exist yet. Re-run \`git rev-parse --abbrev-ref HEAD\` ` +
+  `and confirm it prints exactly "${BRANCH}". If you cannot end up on "${BRANCH}", STOP IMMEDIATELY: ` +
+  `make NO commits, set blocked=true and blockedReason="branch-isolation-failed". ` +
+  `NEVER commit on any branch other than "${BRANCH}".\n`
 
 // ----- structured-output schemas -----
 const FINDINGS = {
@@ -99,9 +112,12 @@ function auditThunks(label, branchNote) {
 // --- Prep: isolated branch + detect commands ---
 phase('Prep')
 await agent(
-  `In this repo: confirm the git working tree is clean (if not, stop and report — do not stash silently). ` +
-  `Create and check out branch "${BRANCH}" off the current branch. Detect the test command and the build command ` +
-  `(read package.json / pyproject.toml / Makefile / CI config). Report: branch created, test cmd, build cmd. Modify NO source.`,
+  `In this repo: confirm the git working tree is clean (\`git status --porcelain\` empty). If NOT clean, STOP and report — do not stash or commit silently. ` +
+  `Record the current branch name (the LAUNCH branch — the workflow must never commit to it). ` +
+  `Then create and check out a NEW branch named exactly "${BRANCH}" off the launch branch: \`git checkout -b ${BRANCH}\`. ` +
+  `VERIFY: run \`git rev-parse --abbrev-ref HEAD\` and confirm it prints exactly "${BRANCH}" — if it does not, STOP and report failure (do not proceed). ` +
+  `Detect the test command and the build command (read package.json / pyproject.toml / Makefile / CI config). ` +
+  `Report: launch branch, "${BRANCH}" created+verified (quote the rev-parse output), test cmd, build cmd. Modify NO source.`,
   { label: 'prep', phase: 'Prep' })
 
 // --- Audit (parallel) ---
@@ -128,13 +144,14 @@ while (!isGreen(report) && round < MAX_ROUNDS && budget.remaining() > MIN_BUDGET
   for (const f of open) {
     if (budget.remaining() < MIN_BUDGET) { log('budget low — stopping remediation early'); break }
     await agent(
-      `On branch ${BRANCH}, remediate finding ${f.id} — "${f.title}" at ${f.file || '?'}:${f.line || '?'}.\n` +
+      BRANCH_GUARD +
+      `Remediate finding ${f.id} — "${f.title}" at ${f.file || '?'}:${f.line || '?'}.\n` +
       `Recommended fix: ${f.fix || '(derive from the finding and the domain skill)'}\n` +
       `RULES:\n` +
       `- Minimal diff. Hardening only — do NOT change product behavior beyond the fix.\n` +
       `- ADD or fix a test that encodes WHY this matters (anchored to the requirement, not the implementation).\n` +
-      `- Run the FULL test suite AND this verification: ${f.verifyCmd || '(targeted re-check of the fixed path)'}.\n` +
-      `- Only if green, commit atomically: "fix: ${f.id} <one-line summary>". Set verified+committed true.\n` +
+      `- Verify with TARGETED tests only — run just the test file(s)/path that cover the code you changed, plus this check if given: ${f.verifyCmd || '(targeted re-check of the fixed path)'}. Do NOT run the whole test suite here (a single full-suite gate runs once in the Verify phase).\n` +
+      `- Only if the targeted tests pass, commit atomically on "${BRANCH}": "fix: ${f.id} <one-line summary>". Set verified+committed true and put the commit sha in "commit".\n` +
       `- If you cannot verify, REVERT your changes and set blocked=true with blockedReason.\n` +
       `- NEVER weaken or delete a test to make it pass — that is the exact H9/B13 failure mode this system exists to catch. If tempted, set blocked=true.\n` +
       `- If this is human-only (rotate a leaked/exposed key, enable RLS in a dashboard, buy a paid tier, run a data migration), do NOT attempt it: set blocked=true and start blockedReason with "HUMAN: ".`,
@@ -156,23 +173,40 @@ while (!isGreen(report) && round < MAX_ROUNDS && budget.remaining() > MIN_BUDGET
   log(`Round ${round}: ${next.length} findings remain, green=${isGreen(report)}`)
 }
 
-// --- Ship: verify branch, open PR (never merge) ---
+// --- Verify: ONE full-suite + build gate (per-fix used cheap targeted tests) ---
+phase('Verify')
+const VERIFY = {
+  type: 'object',
+  properties: { passed: { type: 'boolean' }, summary: { type: 'string' }, failing: { type: 'string' } },
+  required: ['passed', 'summary'],
+}
+const verify = (await agent(
+  BRANCH_GUARD +
+  `Run the FULL test suite AND the build ONCE on "${BRANCH}", capturing output. This is the single full-suite gate for the whole remediation round (the per-fix steps used cheap targeted tests). ` +
+  `Set passed=true only if BOTH the full suite and the build are green. If anything is red, set passed=false, put the failing suite/step in "failing" and a one-line "summary". ` +
+  `Do NOT fix anything and do NOT weaken/skip tests here — only run and report.`,
+  { label: 'verify', phase: 'Verify', schema: VERIFY })) || { passed: false, summary: 'verify agent returned nothing' }
+
+// --- Ship: open PR (never merge) ---
 phase('Ship')
 const blocked = (report.findings || []).filter(f => f.humanOnly || f.blocked)
 const ship = await agent(
-  `On branch ${BRANCH}: run the full test suite and the build, capture output. ` +
-  `Push the branch and open a PR (use gh if available; otherwise push and print the exact PR-create command). ` +
+  BRANCH_GUARD +
+  `The full-suite gate already ran (passed=${verify.passed}; ${verify.summary}). Do NOT re-run the whole suite. ` +
+  `Push "${BRANCH}" and open a PR (use gh if available; otherwise push and print the exact PR-create command). ` +
   `PR title: "Audit remediation (${STAMP})". PR body must include: a per-severity summary of fixes applied; ` +
-  `the final state (${isGreen(report) ? 'verdict 🟢 ACCEPTABLE' : `${(report.findings || []).length} findings still open`}); ` +
+  `the full-suite gate result (${verify.passed ? 'PASSED' : 'FAILED — ' + (verify.summary || 'see failing')}${verify.passed ? '' : ' — mark the PR DO-NOT-MERGE until fixed'}); ` +
+  `the final verdict (${isGreen(report) ? '🟢 ACCEPTABLE' : `${(report.findings || []).length} findings still open`}); ` +
   `and a "HUMAN ACTION REQUIRED" checklist for these blocked items: ${JSON.stringify(blocked.map(b => ({ id: b.id, reason: b.blockedReason || 'human action' })))}. ` +
-  `Do NOT merge. Return the PR url (or the branch name + push command).`,
+  `Confirm the PR base is the launch branch and the head is "${BRANCH}". Do NOT merge. Return the PR url (or the branch name + push command).`,
   { label: 'open-pr', phase: 'Ship' })
 
 return {
-  status: isGreen(report) ? 'green' : (round >= MAX_ROUNDS ? 'rounds-exhausted' : (budget.remaining() <= MIN_BUDGET ? 'budget-exhausted' : 'partial')),
+  status: !verify.passed ? 'tests-failing' : isGreen(report) ? 'green' : (round >= MAX_ROUNDS ? 'rounds-exhausted' : (budget.remaining() <= MIN_BUDGET ? 'budget-exhausted' : 'partial')),
   rounds: round,
   remaining: (report.findings || []).length,
   blocked: blocked.length,
+  fullSuitePassed: verify.passed,
   branch: BRANCH,
   ship,
 }

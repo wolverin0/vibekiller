@@ -143,6 +143,9 @@ while (!isGreen(report) && round < MAX_ROUNDS && budget.remaining() > MIN_BUDGET
     .sort((a, b) => sevKey(a) - sevKey(b))
   for (const f of open) {
     if (budget.remaining() < MIN_BUDGET) { log('budget low — stopping remediation early'); break }
+    // A single fixer that throws (e.g. a schema agent that never calls
+    // StructuredOutput) must NOT kill the whole run — skip it and continue.
+    try {
     await agent(
       BRANCH_GUARD +
       `Remediate finding ${f.id} — "${f.title}" at ${f.file || '?'}:${f.line || '?'}.\n` +
@@ -156,6 +159,9 @@ while (!isGreen(report) && round < MAX_ROUNDS && budget.remaining() > MIN_BUDGET
       `- NEVER weaken or delete a test to make it pass — that is the exact H9/B13 failure mode this system exists to catch. If tempted, set blocked=true.\n` +
       `- If this is human-only (rotate a leaked/exposed key, enable RLS in a dashboard, buy a paid tier, run a data migration), do NOT attempt it: set blocked=true and start blockedReason with "HUMAN: ".`,
       { label: `fix:${f.id}`, phase: 'Remediate', schema: FIX })
+    } catch (e) {
+      log(`fix ${f.id} agent threw (${String(e).slice(0, 100)}) — skipped, continuing`)
+    }
   }
 
   phase(`Re-review`)
@@ -180,26 +186,37 @@ const VERIFY = {
   properties: { passed: { type: 'boolean' }, summary: { type: 'string' }, failing: { type: 'string' } },
   required: ['passed', 'summary'],
 }
-const verify = (await agent(
-  BRANCH_GUARD +
-  `Run the FULL test suite AND the build ONCE on "${BRANCH}", capturing output. This is the single full-suite gate for the whole remediation round (the per-fix steps used cheap targeted tests). ` +
-  `Set passed=true only if BOTH the full suite and the build are green. If anything is red, set passed=false, put the failing suite/step in "failing" and a one-line "summary". ` +
-  `Do NOT fix anything and do NOT weaken/skip tests here — only run and report.`,
-  { label: 'verify', phase: 'Verify', schema: VERIFY })) || { passed: false, summary: 'verify agent returned nothing' }
+let verify
+try {
+  verify = await agent(
+    BRANCH_GUARD +
+    `Run the FULL test suite AND the build ONCE on "${BRANCH}", capturing output. This is the single full-suite gate for the whole remediation round (the per-fix steps used cheap targeted tests). ` +
+    `Set passed=true only if BOTH the full suite and the build are green. If anything is red, set passed=false, put the failing suite/step in "failing" and a one-line "summary". ` +
+    `Do NOT fix anything and do NOT weaken/skip tests here — only run and report.`,
+    { label: 'verify', phase: 'Verify', schema: VERIFY })
+} catch (e) {
+  verify = { passed: false, summary: `verify agent error: ${String(e).slice(0, 160)}` }
+}
+if (!verify) verify = { passed: false, summary: 'verify agent returned nothing' }
 
 // --- Ship: open PR (never merge) ---
 phase('Ship')
 const blocked = (report.findings || []).filter(f => f.humanOnly || f.blocked)
-const ship = await agent(
-  BRANCH_GUARD +
-  `The full-suite gate already ran (passed=${verify.passed}; ${verify.summary}). Do NOT re-run the whole suite. ` +
-  `Push "${BRANCH}" and open a PR (use gh if available; otherwise push and print the exact PR-create command). ` +
-  `PR title: "Audit remediation (${STAMP})". PR body must include: a per-severity summary of fixes applied; ` +
-  `the full-suite gate result (${verify.passed ? 'PASSED' : 'FAILED — ' + (verify.summary || 'see failing')}${verify.passed ? '' : ' — mark the PR DO-NOT-MERGE until fixed'}); ` +
-  `the final verdict (${isGreen(report) ? '🟢 ACCEPTABLE' : `${(report.findings || []).length} findings still open`}); ` +
-  `and a "HUMAN ACTION REQUIRED" checklist for these blocked items: ${JSON.stringify(blocked.map(b => ({ id: b.id, reason: b.blockedReason || 'human action' })))}. ` +
-  `Confirm the PR base is the launch branch and the head is "${BRANCH}". Do NOT merge. Return the PR url (or the branch name + push command).`,
-  { label: 'open-pr', phase: 'Ship' })
+let ship
+try {
+  ship = await agent(
+    BRANCH_GUARD +
+    `The full-suite gate already ran (passed=${verify.passed}; ${verify.summary}). Do NOT re-run the whole suite. ` +
+    `Push "${BRANCH}" and open a PR (use gh if available; otherwise push and print the exact PR-create command). ` +
+    `PR title: "Audit remediation (${STAMP})". PR body must include: a per-severity summary of fixes applied; ` +
+    `the full-suite gate result (${verify.passed ? 'PASSED' : 'FAILED — ' + (verify.summary || 'see failing')}${verify.passed ? '' : ' — mark the PR DO-NOT-MERGE until fixed'}); ` +
+    `the final verdict (${isGreen(report) ? '🟢 ACCEPTABLE' : `${(report.findings || []).length} findings still open`}); ` +
+    `and a "HUMAN ACTION REQUIRED" checklist for these blocked items: ${JSON.stringify(blocked.map(b => ({ id: b.id, reason: b.blockedReason || 'human action' })))}. ` +
+    `Confirm the PR base is the launch branch and the head is "${BRANCH}". Do NOT merge. Return the PR url (or the branch name + push command).`,
+    { label: 'open-pr', phase: 'Ship' })
+} catch (e) {
+  ship = `ship agent error: ${String(e).slice(0, 200)} — branch "${BRANCH}" has the commits; push + open the PR manually`
+}
 
 return {
   status: !verify.passed ? 'tests-failing' : isGreen(report) ? 'green' : (round >= MAX_ROUNDS ? 'rounds-exhausted' : (budget.remaining() <= MIN_BUDGET ? 'budget-exhausted' : 'partial')),

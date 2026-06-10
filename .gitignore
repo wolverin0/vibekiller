@@ -7,7 +7,8 @@ Thumbs.db
 
 # audit output (generated in target repos, not part of the toolkit)
 audit-report*.md
-!context/audit-report-format.md   # the toolkit's OWN format file must ship
+# but the toolkit's OWN format file must ship (gitignore has no inline comments):
+!context/audit-report-format.md
 external-actions-required.md
 baseline-policy.md
 remediation-decisions.md
